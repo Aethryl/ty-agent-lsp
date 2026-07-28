@@ -123,6 +123,34 @@ but `goToImplementation` is absent, ty added `implementationProvider` in 0.0.64.
 the intended trade: diagnostics that agree with your pipeline matter more than one extra
 navigation op, and it resolves itself when the project bumps ty.
 
+## Worktrees
+
+Poetry names its virtualenv from a hash of the project path, so a git worktree has no link to
+its main checkout's environment. Poetry then either finds nothing, or creates an empty venv
+that a shell hook activates, leaving `VIRTUAL_ENV` set and useless. Either way ty resolves no
+third-party imports and reports every one as an error. On a 203k-LOC project that is **1,724
+phantom diagnostics**, and with `diagnostics: true` they land in the agent's context after
+every edit, telling it working imports are broken.
+
+So the plugin does not trust an environment merely because it found one. Each candidate must
+contain at least one of the project's declared dependencies (read with `tomllib`); an env
+holding only pip and setuptools is rejected, with the reason logged. If the project is a git
+worktree, it falls back to the main checkout's `.venv` and Poetry environment, found via
+`git rev-parse --git-common-dir`.
+
+It also warns when a worktree's dependency tables differ from its main checkout, since the
+shared environment is then wrong for it, that worktree wants its own `poetry install`.
+
+Other tools do their own discovery, so for them symlink the environment into the worktree:
+
+```bash
+MAIN=$(dirname "$(git rev-parse --git-common-dir)")
+ln -sfn "$(poetry -C "$MAIN" env info --path)" .venv
+```
+
+Poetry uses an existing `.venv` in preference to its path-keyed one, so this fixes
+`poetry run`, your editor's language server, and this plugin in one step.
+
 ## Why ty rather than pyright
 
 If your project already uses ty, this matters: the diagnostics the agent sees are then
