@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "ty-agent-lsp",
+  "description": "Python code intelligence for Claude Code via Astral ty, navigation, diagnostics, and semantic rename",
+  "owner": {
+    "name": "Fabian Rutten"
+  },
+  "plugins": [
+    {
+      "name": "ty-agent-lsp",
+      "source": "./plugins/ty-agent-lsp",
+      "description": "Python code intelligence for the agent via Astral ty, semantic navigation, diagnostics on edit, and workspace-wide rename",
+      "version": "0.1.0",
+      "author": {
+        "name": "Fabian Rutten"
+      },
+      "category": "development",
+      "keywords": ["python", "lsp", "ty", "astral", "rename", "refactor"]
+    }
+  ]
+}

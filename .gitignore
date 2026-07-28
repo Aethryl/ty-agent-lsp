@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ruff_cache/
+.ty_cache/
+.DS_Store
+*.log

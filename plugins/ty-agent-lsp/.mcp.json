@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ty-refactor": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/ty_refactor.py"]
+    }
+  }
+}

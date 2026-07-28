@@ -1,0 +1,22 @@
+{
+  "name": "ty-agent-lsp",
+  "version": "0.1.0",
+  "description": "Python code intelligence for the agent via Astral ty, semantic navigation, diagnostics on edit, and the workspace-wide rename Claude Code's built-in LSP tool omits.",
+  "author": {
+    "name": "Fabian Rutten"
+  },
+  "homepage": "https://github.com/Aethryl/ty-agent-lsp",
+  "repository": "https://github.com/Aethryl/ty-agent-lsp",
+  "keywords": ["python", "lsp", "ty", "astral", "rename", "refactor", "code-intelligence"],
+  "lspServers": {
+    "ty": {
+      "command": "ty",
+      "args": ["server"],
+      "extensionToLanguage": {
+        ".py": "python",
+        ".pyi": "python"
+      },
+      "diagnostics": true
+    }
+  }
+}
