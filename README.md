@@ -1,16 +1,29 @@
-# ty-agent-lsp
+<h1 align="center">ty-agent-lsp</h1>
 
-A Claude Code plugin that gives the agent real Python code intelligence, backed by
-[ty](https://github.com/astral-sh/ty), Astral's Rust type checker and language server.
+<p align="center">
+  Python code intelligence for Claude Code, backed by
+  <a href="https://github.com/astral-sh/ty">ty</a>, Astral's Rust type checker and language server.
+</p>
+
+<p align="center">
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg">
+  <img alt="Claude Code v2.1.205+" src="https://img.shields.io/badge/Claude%20Code-v2.1.205%2B-d97757.svg">
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-3776ab.svg">
+</p>
 
 Three things, one install:
 
 1. **Semantic navigation and diagnostics** via Claude Code's native LSP integration ,
    find-references, go-to-definition, document/workspace symbols, hover, implementations,
    call hierarchy, and type errors pushed into context after each edit.
-2. **Workspace-wide semantic rename**, `rename_symbol` and `rename_at`, exposed as MCP
-   tools. Claude Code's built-in LSP tool has no rename operation; this fills that gap.
+2. **Workspace-wide semantic rename**, two MCP tools, `rename_symbol` and `rename_at`.
+   Claude Code's built-in LSP tool has no rename operation; this fills that gap.
 3. **A skill** that tells the agent to use all of the above instead of reaching for grep.
+
+**Contents** · [Why](#why) · [Requirements](#requirements) · [Install](#install) ·
+[Rename](#the-rename-tools) · [Which ty gets used](#which-ty-gets-used) ·
+[Worktrees](#worktrees) · [ty vs. pyright](#why-ty-rather-than-pyright) ·
+[Diagnostics](#a-note-on-diagnostics)
 
 ## Why
 
@@ -24,7 +37,7 @@ docstrings, comments and string literals, and it cannot tell two same-named symb
 Measured on that same codebase, with `ty` already on PATH:
 
 | Question | With ty | With grep / Read |
-|---|---|---|
+| --- | --- | --- |
 | Where is `UserService` used? | 237 references across 38 files, **0.5s** | 163 raw source lines ≈ 4,300 tokens of source to re-read |
 | What's in a 2,595-line router? | 87-symbol outline, **740 tokens** | 23,305 tokens to read it whole, **31×** |
 | What's in a 1,595-line service? | 55-symbol outline, **516 tokens** | 16,288 tokens, **31×** |
@@ -38,7 +51,7 @@ reference list costs a fraction of the grep output it replaces.
 **Precision pays off exactly where names are shared**, and there the gap is not marginal:
 
 | Rename | ty | grep would show |
-|---|---|---|
+| --- | --- | --- |
 | `ReadUserDTO.phone_number` → `phone` | **2 edits, 2 files** | 252 lines across 102 files |
 | `OrderService.get` → `get_by_id` | **2 edits, 2 files** | 1,846 lines |
 
@@ -60,17 +73,16 @@ Note the counts aren't directly comparable, grep counts matching *lines*, the LS
   silently skip servers that set `restartOnCrash` or `shutdownTimeout`, with the reason
   visible only under `claude --debug`.
 - **`ty` on your PATH.** This plugin configures a language server; it does not ship one.
-
-  ```bash
-  uv tool install ty     # or: pip install ty
-  ty --version
-  ```
-
 - **Python 3.10+** for the rename server. It is pure standard library, no pip install.
+
+```bash
+uv tool install ty     # or: pip install ty
+ty --version
+```
 
 ## Install
 
-```
+```text
 /plugin marketplace add Aethryl/ty-agent-lsp
 /plugin install ty-agent-lsp@ty-agent-lsp
 /reload-plugins
@@ -78,7 +90,7 @@ Note the counts aren't directly comparable, grep counts matching *lines*, the LS
 
 To try it from a local clone instead:
 
-```
+```text
 /plugin marketplace add ./ty-agent-lsp
 /plugin install ty-agent-lsp@ty-agent-lsp
 /reload-plugins
@@ -100,6 +112,61 @@ never starts.** If you already have `pyright-lsp` installed, disable it:
   }
 }
 ```
+
+## The rename tools
+
+| Tool | Selects the symbol by | Use when |
+| --- | --- | --- |
+| `rename_symbol` | project-wide name (`symbol`) | the name is unique enough to identify on its own |
+| `rename_at` | 1-based `file`, `line`, `character` | the name is ambiguous, or you already know the position |
+
+Both take `new_name`, both default to a **dry run**, nothing is written until you pass
+`dry_run: false`, and both accept an optional `project_root`, which defaults to
+`CLAUDE_PROJECT_DIR` and then the working directory.
+
+A dry run reports the total edit count and the affected files ranked by edits, so the blast
+radius is visible before anything changes. An unknown or misspelled name is not a silent
+no-op: `rename_symbol` reports that nothing matched and lists near-miss candidates. An
+ambiguous name is refused the same way, with the candidates listed rather than guessed at.
+
+### What rename gets right
+
+Verified against a fixture built for the purpose:
+
+- Identifiers in **docstrings, comments and string literals are left alone**.
+- **CRLF files stay CRLF**; a file with no trailing newline doesn't gain one.
+- **Non-ASCII lines** are handled, LSP columns are UTF-16 code units, converted properly,
+  so a line containing `café, naïve ünïcode ✨` edits at the right offset.
+- **Multiple occurrences on one line** all land correctly (edits are applied bottom-up so
+  earlier ones never shift later offsets).
+
+### It tells you what it could not rename
+
+ty renames what it can resolve. The same name in an `__all__` list, a `getattr` lookup, a
+registry key or a migration is invisible to it, and **`ty check` still passes, because
+none of those are type errors.** So every rename ends with a scan for occurrences it left
+behind, each tagged by kind: `(text)` for prose such as a docstring mention, `(string)` for
+a string literal. Positions the rename covers are excluded, so the report reads the same
+before and after applying, the risk is visible on the dry run.
+
+The `(string)` entries are the dangerous ones: a name in an `__all__` list, a `getattr`
+lookup or a registry key keeps typechecking cleanly and fails at runtime.
+
+This is not hypothetical. Renaming `BaseError` in the test repo rewrote 26 references
+across 10 files, `ty check` reported *"All checks passed!"*, and the package was broken:
+`__init__.py` still listed `"BaseError"` in `__all__` as a string, so
+`from mypkg.errors import *` raised `AttributeError`. The typecheck could not see
+it; a linter and this scan both could.
+
+### What no tool can do
+
+ty sees static Python. It does not see `getattr`/`setattr`, string-keyed dispatch, table
+and column names in Alembic migrations, Jinja templates, or identifiers spelled out in
+config. The residual scan covers `.py`/`.pyi` only, so **after any rename also grep your
+non-Python files**, templates, SQL, YAML. And run a linter, not just a typechecker.
+
+ty is also pre-1.0 (tested against 0.0.62). Rename correctness is not guaranteed, which is
+why dry-run is the default. Typecheck and review the diff before committing.
 
 ## Which ty gets used
 
@@ -164,52 +231,6 @@ across 2,000 files.
 If your project uses pyright as its source of truth, install `pyright-lsp` instead. You
 would lose rename, which pyright's server supports but Claude Code does not expose.
 
-## The rename tools
-
-Both default to a dry run. Nothing is written until you pass `dry_run: false`.
-
-**`rename_symbol`**, by name:
-
-```
-rename_symbol(symbol="UserService", new_name="UserAccountService")
-
-DRY RUN, nothing written: UserService -> UserAccountService
-237 edits across 38 files
-
-   101  src/users/routers/legacy_users_router.py
-    20  src/orders/routers/orders_router.py
-     8  tests/users/services/test_update.py
-     ...
-```
-
-Unknown or misspelled names come back with suggestions rather than a silent no-op:
-
-```
-no symbol named 'OrdersService' found in the project.
-Did you mean: OrderService, Orders, Order, OrderRepository?
-```
-
-**`rename_at`**, by 1-based position, for names that are ambiguous on their own:
-
-```
-rename_at(file="src/users/services/user_service.py", line=129, character=7,
-          new_name="UserAccountService")
-```
-
-Both accept an optional `project_root`; it defaults to `CLAUDE_PROJECT_DIR`, then the
-working directory.
-
-### What rename gets right
-
-Verified against a fixture built for the purpose:
-
-- Identifiers in **docstrings, comments and string literals are left alone**.
-- **CRLF files stay CRLF**; a file with no trailing newline doesn't gain one.
-- **Non-ASCII lines** are handled, LSP columns are UTF-16 code units, converted properly,
-  so a line containing `café, naïve ünïcode ✨` edits at the right offset.
-- **Multiple occurrences on one line** all land correctly (edits are applied bottom-up so
-  earlier ones never shift later offsets).
-
 ## A note on diagnostics
 
 ty supports both LSP diagnostic models and picks based on what the client advertises. If a
@@ -222,46 +243,9 @@ does not advertise pull support. So diagnostics arrive on edit, as intended. Wor
 because it's the failure mode to check first if diagnostics ever go quiet, a client that
 starts advertising pull would see ty fall silent on push while still being perfectly healthy.
 
-### It tells you what it could not rename
-
-ty renames what it can resolve. The same name in an `__all__` list, a `getattr` lookup, a
-registry key or a migration is invisible to it, and **`ty check` still passes, because
-none of those are type errors.** So every rename reports what it left behind:
-
-```
-26 edits across 10 files
-...
-5 place(s) still mention 'BaseError' and were NOT renamed, ty cannot resolve these:
-  src/locations/exceptions/location_exceptions.py:18 (text)    subclasses BaseError directly. Router…
-  mypkg/errors/__init__.py:18            (string)   "BaseError",
-  ...
-
-The (string) entries are the dangerous ones. A name in an `__all__` list, a getattr
-lookup or a registry key will keep typechecking cleanly and fail at runtime.
-```
-
-That report appears on the **dry run too**, positions the rename covers are excluded, so
-it reads the same before and after applying. You see the risk before you commit to it.
-
-This is not a hypothetical. Renaming `BaseError` in the test repo rewrote 26 references
-across 10 files, `ty check` reported **"All checks passed!"**, and the package was broken:
-`__init__.py` still listed `"BaseError"` in `__all__` as a string, so
-`from mypkg.errors import *` raised `AttributeError`. The typecheck could not see
-it; a linter and this scan both could.
-
-### What no tool can do
-
-ty sees static Python. It does not see `getattr`/`setattr`, string-keyed dispatch, table
-and column names in Alembic migrations, Jinja templates, or identifiers spelled out in
-config. The residual scan covers `.py`/`.pyi` only, so **after any rename also grep your
-non-Python files**, templates, SQL, YAML. And run a linter, not just a typechecker.
-
-ty is also pre-1.0 (tested against 0.0.62). Rename correctness is not guaranteed, which is
-why dry-run is the default. Typecheck and review the diff before committing.
-
 ## Layout
 
-```
+```text
 ty-agent-lsp/
 ├── .claude-plugin/marketplace.json
 └── plugins/ty-agent-lsp/
