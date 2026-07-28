@@ -19,8 +19,12 @@ import threading
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from ty_resolve import find_ty  # noqa: E402
+
 SERVER_NAME = "ty-refactor"
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = "0.2.0"
 DEFAULT_PROTOCOL_VERSION = "2025-06-18"
 LSP_TIMEOUT = 120.0
 
@@ -63,18 +67,19 @@ class LspClient:
         self._next_id = 0
         self._opened: set[str] = set()
         try:
+            binary = find_ty(root)
+        except FileNotFoundError as exc:
+            raise LspError(str(exc))
+        try:
             self.proc = subprocess.Popen(
-                ["ty", "server"],
+                [binary, "server"],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 cwd=str(root),
             )
-        except FileNotFoundError:
-            raise LspError(
-                "`ty` was not found on PATH. Install it with `uv tool install ty`, "
-                "`pip install ty`, or add your project's virtualenv to PATH."
-            )
+        except OSError as exc:
+            raise LspError(f"could not start {binary}: {exc}")
 
     def _send(
         self, method: str, params: dict[str, Any], notify: bool = False
