@@ -1,6 +1,6 @@
 {
   "name": "ty-agent-lsp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Python code intelligence for the agent via Astral ty \u2014 semantic navigation, diagnostics on edit, and the workspace-wide rename Claude Code's built-in LSP tool omits. Uses the project's own pinned ty, and reports every occurrence it could not resolve.",
   "author": {
     "name": "Fabian Rutten"

@@ -22,10 +22,10 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from ty_resolve import find_ty  # noqa: E402
+from ty_resolve import environ_for, resolve  # noqa: E402
 
 SERVER_NAME = "ty-refactor"
-SERVER_VERSION = "0.3.0"
+SERVER_VERSION = "0.4.0"
 DEFAULT_PROTOCOL_VERSION = "2025-06-18"
 LSP_TIMEOUT = 120.0
 
@@ -68,19 +68,20 @@ class LspClient:
         self._next_id = 0
         self._opened: set[str] = set()
         try:
-            binary = find_ty(root)
+            environment = resolve(root)
         except FileNotFoundError as exc:
             raise LspError(str(exc))
         try:
             self.proc = subprocess.Popen(
-                [binary, "server"],
+                [environment.binary, "server"],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 cwd=str(root),
+                env=environ_for(environment),
             )
         except OSError as exc:
-            raise LspError(f"could not start {binary}: {exc}")
+            raise LspError(f"could not start {environment.binary}: {exc}")
 
     def _send(
         self, method: str, params: dict[str, Any], notify: bool = False
