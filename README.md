@@ -20,52 +20,22 @@ Three things, one install:
    Claude Code's built-in LSP tool has no rename operation; this fills that gap.
 3. **A skill** that tells the agent to use all of the above instead of reaching for grep.
 
-**Contents** · [Why](#why) · [Requirements](#requirements) · [Install](#install) ·
-[Rename](#the-rename-tools) · [Which ty gets used](#which-ty-gets-used) ·
+What that buys you, measured on a 203k-LOC Python codebase:
+
+- **31× cheaper file comprehension**, an 87-symbol outline of a 2,595-line router costs
+  740 tokens against 23,305 to read the file whole.
+- **Exact references in under a second**, 237 uses of a class across 38 files, no
+  docstring or comment false positives.
+- **Renames that touch only the symbol you meant**, `ReadUserDTO.phone_number` → `phone`
+  is 2 edits in 2 files; grep would put 252 lines across 102 files in front of the agent.
+- Across 125 real sessions, **63% of all tool-output tokens went to `Read` and `grep`** ,
+  that is the bill this shrinks. [Full numbers below.](#why-it-pays-off)
+
+**Contents** · [Requirements](#requirements) · [Install](#install) · [Usage](#usage) ·
+[Why it pays off](#why-it-pays-off) · [Which ty gets used](#which-ty-gets-used) ·
 [Worktrees](#worktrees) · [ty vs. pyright](#why-ty-rather-than-pyright) ·
+[Rename limits](#rename-what-it-guarantees-and-what-it-cannot) ·
 [Diagnostics](#a-note-on-diagnostics)
-
-## Why
-
-Left to itself, the agent finds code by grepping and then reading whole files. Across 125
-real sessions on a 203k-LOC Python codebase (8,252 tool calls), **63% of all tool-output
-tokens went to `Read` and `grep`**, 972k tokens reading files, 535k tokens grepping.
-
-That work is both expensive and imprecise. Grep matches text, so it hits identifiers inside
-docstrings, comments and string literals, and it cannot tell two same-named symbols apart.
-
-Measured on that same codebase, with `ty` already on PATH:
-
-| Question | With ty | With grep / Read |
-| --- | --- | --- |
-| Where is `UserService` used? | 237 references across 38 files, **0.5s** | 163 raw source lines ≈ 4,300 tokens of source to re-read |
-| What's in a 2,595-line router? | 87-symbol outline, **740 tokens** | 23,305 tokens to read it whole, **31×** |
-| What's in a 1,595-line service? | 55-symbol outline, **516 tokens** | 16,288 tokens, **31×** |
-| Rename a class everywhere | **237 edits across 38 files, 0.5s** | grep, then edit 38 files by hand |
-
-Numbers are from one real repository; yours will differ. The shape won't.
-
-The token saving is the reliable win: an outline costs a fraction of the file, and a
-reference list costs a fraction of the grep output it replaces.
-
-**Precision pays off exactly where names are shared**, and there the gap is not marginal:
-
-| Rename | ty | grep would show |
-| --- | --- | --- |
-| `ReadUserDTO.phone_number` → `phone` | **2 edits, 2 files** | 252 lines across 102 files |
-| `OrderService.get` → `get_by_id` | **2 edits, 2 files** | 1,846 lines |
-
-`phone_number` is a field on many different models, DTOs and schemas; `get` is a method on
-52 different classes. ty renames the one you pointed at and leaves the 51 others alone.
-Asked for a bare `get`, it refuses outright and lists the candidates rather than guessing.
-
-On a *distinctive* class name grep is often nearly right, just far more expensive, on this
-codebase `BaseError` gives 26 references against 31 grep lines, only 2 of which are
-docstring prose. So the honest summary is: always cheaper, and dramatically more accurate
-on common names.
-
-Note the counts aren't directly comparable, grep counts matching *lines*, the LSP counts
-*occurrences*, and Claude Code's LSP tool passes `includeDeclaration: true`.
 
 ## Requirements
 
@@ -113,7 +83,13 @@ never starts.** If you already have `pyright-lsp` installed, disable it:
 }
 ```
 
-## The rename tools
+## Usage
+
+Navigation and diagnostics need nothing from you: once the plugin is enabled the agent gets
+the LSP operations automatically, the bundled skill points it at them instead of grep, and
+type errors arrive in its context after each edit.
+
+Rename is explicit, through two MCP tools:
 
 | Tool | Selects the symbol by | Use when |
 | --- | --- | --- |
@@ -129,44 +105,56 @@ radius is visible before anything changes. An unknown or misspelled name is not 
 no-op: `rename_symbol` reports that nothing matched and lists near-miss candidates. An
 ambiguous name is refused the same way, with the candidates listed rather than guessed at.
 
-### What rename gets right
+Every rename, dry run included, also lists the occurrences ty *could not* resolve, which
+is the part worth reading before you apply one. See
+[Rename: what it guarantees and what it cannot](#rename-what-it-guarantees-and-what-it-cannot).
 
-Verified against a fixture built for the purpose:
+---
 
-- Identifiers in **docstrings, comments and string literals are left alone**.
-- **CRLF files stay CRLF**; a file with no trailing newline doesn't gain one.
-- **Non-ASCII lines** are handled, LSP columns are UTF-16 code units, converted properly,
-  so a line containing `café, naïve ünïcode ✨` edits at the right offset.
-- **Multiple occurrences on one line** all land correctly (edits are applied bottom-up so
-  earlier ones never shift later offsets).
+Everything below is detail: the measurements, how the `ty` binary is chosen, worktree
+pitfalls, and the exact limits of rename.
 
-### It tells you what it could not rename
+## Why it pays off
 
-ty renames what it can resolve. The same name in an `__all__` list, a `getattr` lookup, a
-registry key or a migration is invisible to it, and **`ty check` still passes, because
-none of those are type errors.** So every rename ends with a scan for occurrences it left
-behind, each tagged by kind: `(text)` for prose such as a docstring mention, `(string)` for
-a string literal. Positions the rename covers are excluded, so the report reads the same
-before and after applying, the risk is visible on the dry run.
+Left to itself, the agent finds code by grepping and then reading whole files. Across 125
+real sessions on a 203k-LOC Python codebase (8,252 tool calls), **63% of all tool-output
+tokens went to `Read` and `grep`**, 972k tokens reading files, 535k tokens grepping.
 
-The `(string)` entries are the dangerous ones: a name in an `__all__` list, a `getattr`
-lookup or a registry key keeps typechecking cleanly and fails at runtime.
+That work is both expensive and imprecise. Grep matches text, so it hits identifiers inside
+docstrings, comments and string literals, and it cannot tell two same-named symbols apart.
 
-This is not hypothetical. Renaming `BaseError` in the test repo rewrote 26 references
-across 10 files, `ty check` reported *"All checks passed!"*, and the package was broken:
-`__init__.py` still listed `"BaseError"` in `__all__` as a string, so
-`from mypkg.errors import *` raised `AttributeError`. The typecheck could not see
-it; a linter and this scan both could.
+Measured on that same codebase, with `ty` already on PATH:
 
-### What no tool can do
+| Question | With ty | With grep / Read |
+| --- | --- | --- |
+| Where is `UserService` used? | 237 references across 38 files, **0.5s** | 163 raw source lines ≈ 4,300 tokens of source to re-read |
+| What's in a 2,595-line router? | 87-symbol outline, **740 tokens** | 23,305 tokens to read it whole, **31×** |
+| What's in a 1,595-line service? | 55-symbol outline, **516 tokens** | 16,288 tokens, **31×** |
+| Rename a class everywhere | **237 edits across 38 files, 0.5s** | grep, then edit 38 files by hand |
 
-ty sees static Python. It does not see `getattr`/`setattr`, string-keyed dispatch, table
-and column names in Alembic migrations, Jinja templates, or identifiers spelled out in
-config. The residual scan covers `.py`/`.pyi` only, so **after any rename also grep your
-non-Python files**, templates, SQL, YAML. And run a linter, not just a typechecker.
+Numbers are from one real repository; yours will differ. The shape won't.
 
-ty is also pre-1.0 (tested against 0.0.62). Rename correctness is not guaranteed, which is
-why dry-run is the default. Typecheck and review the diff before committing.
+The token saving is the reliable win: an outline costs a fraction of the file, and a
+reference list costs a fraction of the grep output it replaces.
+
+**Precision pays off exactly where names are shared**, and there the gap is not marginal:
+
+| Rename | ty | grep would show |
+| --- | --- | --- |
+| `ReadUserDTO.phone_number` → `phone` | **2 edits, 2 files** | 252 lines across 102 files |
+| `OrderService.get` → `get_by_id` | **2 edits, 2 files** | 1,846 lines |
+
+`phone_number` is a field on many different models, DTOs and schemas; `get` is a method on
+52 different classes. ty renames the one you pointed at and leaves the 51 others alone.
+Asked for a bare `get`, it refuses outright and lists the candidates rather than guessing.
+
+On a *distinctive* class name grep is often nearly right, just far more expensive, on this
+codebase `BaseError` gives 26 references against 31 grep lines, only 2 of which are
+docstring prose. So the honest summary is: always cheaper, and dramatically more accurate
+on common names.
+
+Note the counts aren't directly comparable, grep counts matching *lines*, the LSP counts
+*occurrences*, and Claude Code's LSP tool passes `includeDeclaration: true`.
 
 ## Which ty gets used
 
@@ -230,6 +218,45 @@ across 2,000 files.
 
 If your project uses pyright as its source of truth, install `pyright-lsp` instead. You
 would lose rename, which pyright's server supports but Claude Code does not expose.
+
+## Rename: what it guarantees and what it cannot
+
+Verified against a fixture built for the purpose:
+
+- Identifiers in **docstrings, comments and string literals are left alone**.
+- **CRLF files stay CRLF**; a file with no trailing newline doesn't gain one.
+- **Non-ASCII lines** are handled, LSP columns are UTF-16 code units, converted properly,
+  so a line containing `café, naïve ünïcode ✨` edits at the right offset.
+- **Multiple occurrences on one line** all land correctly (edits are applied bottom-up so
+  earlier ones never shift later offsets).
+
+### It tells you what it could not rename
+
+ty renames what it can resolve. The same name in an `__all__` list, a `getattr` lookup, a
+registry key or a migration is invisible to it, and **`ty check` still passes, because
+none of those are type errors.** So every rename ends with a scan for occurrences it left
+behind, each tagged by kind: `(text)` for prose such as a docstring mention, `(string)` for
+a string literal. Positions the rename covers are excluded, so the report reads the same
+before and after applying, the risk is visible on the dry run.
+
+The `(string)` entries are the dangerous ones: a name in an `__all__` list, a `getattr`
+lookup or a registry key keeps typechecking cleanly and fails at runtime.
+
+This is not hypothetical. Renaming `BaseError` in the test repo rewrote 26 references
+across 10 files, `ty check` reported *"All checks passed!"*, and the package was broken:
+`__init__.py` still listed `"BaseError"` in `__all__` as a string, so
+`from mypkg.errors import *` raised `AttributeError`. The typecheck could not see
+it; a linter and this scan both could.
+
+### What no tool can do
+
+ty sees static Python. It does not see `getattr`/`setattr`, string-keyed dispatch, table
+and column names in Alembic migrations, Jinja templates, or identifiers spelled out in
+config. The residual scan covers `.py`/`.pyi` only, so **after any rename also grep your
+non-Python files**, templates, SQL, YAML. And run a linter, not just a typechecker.
+
+ty is also pre-1.0 (tested against 0.0.62). Rename correctness is not guaranteed, which is
+why dry-run is the default. Typecheck and review the diff before committing.
 
 ## A note on diagnostics
 
