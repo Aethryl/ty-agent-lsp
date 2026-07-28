@@ -14,11 +14,15 @@ confuse two different symbols that happen to share a name.
 
 **Where is this symbol used?** → `findReferences`. Never grep for an identifier.
 
-Measured on a 203k-LOC codebase: `findReferences` on a service class returned 199 real
-references across 38 files in 0.6s. The equivalent `rg` returned 163 lines that had to be
-read as raw source, roughly ten times the tokens, and it included docstring prose that
-merely mentioned the name. On another class, grep reported 31 hits where only 16 were real
-code references; the other 15 were words in docstrings.
+Measured on a 203k-LOC codebase: `findReferences` on a service class returned 237
+references across 38 files in 0.5s, as a compact list of positions. The equivalent `rg`
+returned 163 lines of raw source, several times the tokens for a less precise answer.
+
+The token saving is the dependable part. Precision is a narrower edge: it matters when the
+name is common, or appears in strings, comments and docstrings, where grep cannot tell
+prose from code. On a distinctive class name grep is often nearly right, just far more
+expensive, so reach for the LSP because it is cheaper and exact, not because grep always
+lies.
 
 **Where is this defined? What type is it?** → `goToDefinition`, `hover`,
 `goToImplementation`. Not grep for `class X` or `def x`.

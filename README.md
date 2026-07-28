@@ -25,13 +25,23 @@ Measured on that same codebase, with `ty` already on PATH:
 
 | Question | With ty | With grep / Read |
 |---|---|---|
-| Where is `UserService` used? | 199 references across 38 files, **0.6s** | 163 raw source lines ≈ 4,300 tokens, ~10× more, includes docstring prose |
-| Where is `BaseError` used? | **16** real code references | 31 hits, 15 were words inside docstrings |
+| Where is `UserService` used? | 237 references across 38 files, **0.5s** | 163 raw source lines ≈ 4,300 tokens of source to re-read |
 | What's in a 2,595-line router? | 87-symbol outline, **740 tokens** | 23,305 tokens to read it whole, **31×** |
 | What's in a 1,595-line service? | 55-symbol outline, **516 tokens** | 16,288 tokens, **31×** |
 | Rename a class everywhere | **237 edits across 38 files, 0.5s** | grep, then edit 38 files by hand |
 
 Numbers are from one real repository; yours will differ. The shape won't.
+
+The token saving is the reliable win: an outline costs a fraction of the file, and a
+reference list costs a fraction of the grep output it replaces. **Correctness is the
+narrower win**, on this codebase `BaseError` gives 26 references against 31 grep
+lines, and only 2 of those lines are docstring prose. Precision matters most where a name
+is common enough to collide, or appears in strings and comments; on a distinctive class
+name grep is often nearly right, just far more expensive.
+
+Note the two counts aren't directly comparable: grep counts matching *lines*, the LSP
+counts *occurrences*, and Claude Code's LSP tool passes `includeDeclaration: true` so
+declarations and import bindings are included.
 
 ## Requirements
 
