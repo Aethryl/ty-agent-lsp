@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -24,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ty_resolve import find_ty  # noqa: E402
 
 SERVER_NAME = "ty-refactor"
-SERVER_VERSION = "0.2.0"
+SERVER_VERSION = "0.3.0"
 DEFAULT_PROTOCOL_VERSION = "2025-06-18"
 LSP_TIMEOUT = 120.0
 
@@ -429,6 +430,125 @@ def apply_edits(edits: dict[Path, list[dict]]) -> tuple[int, list[str]]:
     return applied, problems
 
 
+SCAN_SUFFIXES = (".py", ".pyi")
+SCAN_SKIP_DIRS = {
+    ".git",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".ty_cache",
+    ".pytest_cache",
+    "dist",
+    "build",
+}
+
+
+def identifier_at(path: Path, prepared: Any) -> str:
+    """Pull the identifier text out of a prepareRename result.
+
+    Needed because rename_at is given only a position, so the old name has to be read
+    back from the range the server says it will rename.
+    """
+    if not isinstance(prepared, dict):
+        return ""
+    placeholder = prepared.get("placeholder")
+    if isinstance(placeholder, str) and placeholder.isidentifier():
+        return placeholder
+    span = prepared if "start" in prepared else prepared.get("range")
+    if not isinstance(span, dict) or "start" not in span or "end" not in span:
+        return ""
+    start, end = span["start"], span["end"]
+    if start.get("line") != end.get("line"):
+        return ""
+    try:
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            rows = split_keeping_endings(handle.read())
+    except OSError:
+        return ""
+    row = start.get("line", 0)
+    if row >= len(rows):
+        return ""
+    text = rows[row][0]
+    word = text[
+        utf16_to_index(text, start.get("character", 0)) : utf16_to_index(
+            text, end.get("character", 0)
+        )
+    ]
+    return word if word.isidentifier() else ""
+
+
+def covered_spans(edits: dict[Path, list[dict]]) -> dict[Path, set[tuple[int, int]]]:
+    """Map each file to the (0-based line, utf-16 column) pairs the rename rewrites."""
+    spans: dict[Path, set[tuple[int, int]]] = {}
+    for path, file_edits in edits.items():
+        for edit in file_edits:
+            start = edit["range"]["start"]
+            spans.setdefault(path, set()).add(
+                (start.get("line", 0), start.get("character", 0))
+            )
+    return spans
+
+
+def scan_residual(
+    root: Path,
+    name: str,
+    edits: dict[Path, list[dict]] | None = None,
+    limit: int = 25,
+) -> list[str]:
+    """Find occurrences of the old name the rename will not touch.
+
+    A type checker only renames what it can resolve. The same name in an `__all__` list,
+    a getattr lookup, a migration or a template survives untouched, and `ty check` still
+    passes, because none of those are type errors. Renaming a class whose `__all__` entry
+    is a string literal yields an import that raises at runtime while the typecheck stays
+    green, so these get reported instead of discovered later.
+
+    Positions the rename covers are excluded, so this reads the same before and after
+    applying, the dry run warns rather than merely listing what is about to change.
+    """
+    pattern = re.compile(rf"\b{re.escape(name)}\b")
+    spans = covered_spans(edits or {})
+    found: list[str] = []
+    truncated = False
+
+    for path in sorted(root.rglob("*")):
+        if path.is_dir() or path.suffix not in SCAN_SUFFIXES:
+            continue
+        if SCAN_SKIP_DIRS & set(path.parts):
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        except OSError:
+            continue
+        touched = spans.get(path, set())
+        for number, line in enumerate(lines):
+            for match in pattern.finditer(line):
+                if (number, index_to_utf16(line, match.start())) in touched:
+                    continue
+                if len(found) >= limit:
+                    truncated = True
+                    break
+                quoted = (
+                    line[match.start() - 1 : match.start()] in "\"'"
+                    and line[match.end() : match.end() + 1] in "\"'"
+                )
+                kind = "string" if quoted else "text"
+                found.append(
+                    f"{relative(path, root)}:{number + 1} ({kind})  {line.strip()[:70]}"
+                )
+            if truncated:
+                break
+        if truncated:
+            break
+
+    if truncated:
+        found.append(f"... more than {limit} occurrences; listing stopped here")
+    return found
+
+
 def format_report(
     edits: dict[Path, list[dict]],
     root: Path,
@@ -437,6 +557,7 @@ def format_report(
     dry_run: bool,
     warnings: list[str],
     problems: list[str],
+    residual: list[str] | None = None,
 ) -> str:
     total = sum(len(items) for items in edits.values())
     if not total:
@@ -461,13 +582,30 @@ def format_report(
         parts.append("Warnings:\n" + "\n".join(f"  {item}" for item in warnings))
     if problems:
         parts.append("Problems:\n" + "\n".join(f"  {item}" for item in problems))
+
+    if residual:
+        strings = [item for item in residual if "(string)" in item]
+        lead = (
+            f"{len(residual)} place(s) still mention {old_name!r} and were NOT renamed, "
+            "ty cannot resolve these:"
+        )
+        block = lead + "\n" + "\n".join(f"  {item}" for item in residual)
+        if strings:
+            block += (
+                "\n\nThe (string) entries are the dangerous ones. A name in an `__all__` "
+                "list, a getattr lookup or a registry key will keep typechecking cleanly "
+                "and fail at runtime. Fix those before anything else."
+            )
+        else:
+            block += "\n\nThese look like prose (docstrings, comments); update them if they now read wrong."
+        parts.append(block)
+
     if dry_run:
         parts.append("Re-run with dry_run: false to apply.")
     else:
         parts.append(
-            "Verify with `ty check` (or your project's typecheck command), review `git diff`, "
-            "and grep for dynamic references ty cannot see: getattr, string-keyed lookups, "
-            "migrations, templates."
+            "Verify with `ty check` (or your project's typecheck command) AND a linter, a "
+            "green typecheck does not prove a string reference survived. Then review `git diff`."
         )
     return "\n\n".join(parts)
 
@@ -489,7 +627,7 @@ def do_rename(
         position = {"line": line, "character": character}
 
         try:
-            client.request(
+            prepared = client.request(
                 "textDocument/prepareRename",
                 {"textDocument": {"uri": uri}, "position": position},
             )
@@ -497,6 +635,10 @@ def do_rename(
             raise LspError(
                 f"ty will not rename at {relative(path, root)}:{line + 1}:{character + 1}, {exc}"
             )
+
+        scan_name = identifier_at(path, prepared) or (
+            old_name if old_name.isidentifier() else ""
+        )
 
         workspace_edit = client.request(
             "textDocument/rename",
@@ -513,8 +655,17 @@ def do_rename(
             client.close_documents()
             _, problems = apply_edits(edits)
 
+        residual = scan_residual(root, scan_name, edits) if scan_name else []
+
         return format_report(
-            edits, root, old_name, new_name, dry_run, warnings, problems
+            edits,
+            root,
+            scan_name or old_name,
+            new_name,
+            dry_run,
+            warnings,
+            problems,
+            residual,
         )
     finally:
         client.shutdown()

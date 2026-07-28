@@ -61,11 +61,19 @@ A rename of one class produced 237 edits across 38 files in 0.5s, correct by
 construction, and it left the class name mentioned in docstrings and string literals
 alone.
 
+Every rename ends with a report of what it could **not** rename, occurrences ty cannot
+resolve, tagged `(string)` or `(text)`. Read it. The `(string)` ones break at runtime while
+the typecheck stays green.
+
 After applying a rename:
 
-1. Run the project's typecheck (`ty check`, or whatever the repo uses).
-2. Review `git diff`.
-3. Grep for what the language server cannot see (below).
+1. Fix anything the residual report flagged, `(string)` entries first.
+2. Run the project's typecheck (`ty check`, or whatever the repo uses).
+3. Run the linter too, a green typecheck is not proof. In this codebase a rename left
+   `"BaseError"` in an `__all__` list; `ty check` said "All checks passed!" while
+   `from mypkg.errors import *` raised `AttributeError`. Ruff caught it.
+4. Review `git diff`.
+5. Grep non-Python files, the residual scan only reads `.py`/`.pyi`.
 
 ## Where grep is still the right tool
 

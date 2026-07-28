@@ -10,7 +10,7 @@
       "name": "ty-agent-lsp",
       "source": "./plugins/ty-agent-lsp",
       "description": "Python code intelligence for the agent via Astral ty \u2014 navigation, diagnostics, and workspace-wide rename, using the project's own pinned ty",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "author": {
         "name": "Fabian Rutten"
       },

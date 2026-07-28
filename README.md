@@ -194,12 +194,39 @@ does not advertise pull support. So diagnostics arrive on edit, as intended. Wor
 because it's the failure mode to check first if diagnostics ever go quiet, a client that
 starts advertising pull would see ty fall silent on push while still being perfectly healthy.
 
+### It tells you what it could not rename
+
+ty renames what it can resolve. The same name in an `__all__` list, a `getattr` lookup, a
+registry key or a migration is invisible to it, and **`ty check` still passes, because
+none of those are type errors.** So every rename reports what it left behind:
+
+```
+26 edits across 10 files
+...
+5 place(s) still mention 'BaseError' and were NOT renamed, ty cannot resolve these:
+  src/locations/exceptions/location_exceptions.py:18 (text)    subclasses BaseError directly. Router…
+  mypkg/errors/__init__.py:18            (string)   "BaseError",
+  ...
+
+The (string) entries are the dangerous ones. A name in an `__all__` list, a getattr
+lookup or a registry key will keep typechecking cleanly and fail at runtime.
+```
+
+That report appears on the **dry run too**, positions the rename covers are excluded, so
+it reads the same before and after applying. You see the risk before you commit to it.
+
+This is not a hypothetical. Renaming `BaseError` in the test repo rewrote 26 references
+across 10 files, `ty check` reported **"All checks passed!"**, and the package was broken:
+`__init__.py` still listed `"BaseError"` in `__all__` as a string, so
+`from mypkg.errors import *` raised `AttributeError`. The typecheck could not see
+it; a linter and this scan both could.
+
 ### What no tool can do
 
 ty sees static Python. It does not see `getattr`/`setattr`, string-keyed dispatch, table
 and column names in Alembic migrations, Jinja templates, or identifiers spelled out in
-config. **After any rename, grep once for the old name**, a clean typecheck does not prove
-a dynamic reference survived.
+config. The residual scan covers `.py`/`.pyi` only, so **after any rename also grep your
+non-Python files**, templates, SQL, YAML. And run a linter, not just a typechecker.
 
 ty is also pre-1.0 (tested against 0.0.62). Rename correctness is not guaranteed, which is
 why dry-run is the default. Typecheck and review the diff before committing.
