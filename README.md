@@ -90,6 +90,28 @@ never starts.** If you already have `pyright-lsp` installed, disable it:
 }
 ```
 
+## Which ty gets used
+
+A global `ty` drifts from what a project pins, and then the agent sees diagnostics the
+project's own hooks and CI don't have, which defeats the main reason to run ty. So the
+plugin resolves the binary per project, in this order:
+
+1. `$VIRTUAL_ENV`
+2. `<project>/.venv`, then `<project>/venv`
+3. the Poetry environment, when `pyproject.toml` declares Poetry (Poetry keeps venvs
+   outside the project, so it has to be asked, this costs ~0.4s once per server start)
+4. `ty` on `PATH`
+
+Both the language server and the rename tools go through the same resolver, so they can
+never disagree about which binary is in play. `claude --debug` shows the choice
+(`[ty-resolve] using ty from poetry: …`).
+
+**The consequence worth knowing:** available operations track the resolved version, not the
+newest release. On a project pinned to ty 0.0.62 you get navigation, diagnostics and rename,
+but `goToImplementation` is absent, ty added `implementationProvider` in 0.0.64. That is
+the intended trade: diagnostics that agree with your pipeline matter more than one extra
+navigation op, and it resolves itself when the project bumps ty.
+
 ## Why ty rather than pyright
 
 If your project already uses ty, this matters: the diagnostics the agent sees are then
