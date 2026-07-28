@@ -33,15 +33,26 @@ Measured on that same codebase, with `ty` already on PATH:
 Numbers are from one real repository; yours will differ. The shape won't.
 
 The token saving is the reliable win: an outline costs a fraction of the file, and a
-reference list costs a fraction of the grep output it replaces. **Correctness is the
-narrower win**, on this codebase `BaseError` gives 26 references against 31 grep
-lines, and only 2 of those lines are docstring prose. Precision matters most where a name
-is common enough to collide, or appears in strings and comments; on a distinctive class
-name grep is often nearly right, just far more expensive.
+reference list costs a fraction of the grep output it replaces.
 
-Note the two counts aren't directly comparable: grep counts matching *lines*, the LSP
-counts *occurrences*, and Claude Code's LSP tool passes `includeDeclaration: true` so
-declarations and import bindings are included.
+**Precision pays off exactly where names are shared**, and there the gap is not marginal:
+
+| Rename | ty | grep would show |
+|---|---|---|
+| `ReadUserDTO.phone_number` → `phone` | **2 edits, 2 files** | 252 lines across 102 files |
+| `OrderService.get` → `get_by_id` | **2 edits, 2 files** | 1,846 lines |
+
+`phone_number` is a field on many different models, DTOs and schemas; `get` is a method on
+52 different classes. ty renames the one you pointed at and leaves the 51 others alone.
+Asked for a bare `get`, it refuses outright and lists the candidates rather than guessing.
+
+On a *distinctive* class name grep is often nearly right, just far more expensive, on this
+codebase `BaseError` gives 26 references against 31 grep lines, only 2 of which are
+docstring prose. So the honest summary is: always cheaper, and dramatically more accurate
+on common names.
+
+Note the counts aren't directly comparable, grep counts matching *lines*, the LSP counts
+*occurrences*, and Claude Code's LSP tool passes `includeDeclaration: true`.
 
 ## Requirements
 

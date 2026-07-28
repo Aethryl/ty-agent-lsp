@@ -18,11 +18,15 @@ Measured on a 203k-LOC codebase: `findReferences` on a service class returned 23
 references across 38 files in 0.5s, as a compact list of positions. The equivalent `rg`
 returned 163 lines of raw source, several times the tokens for a less precise answer.
 
-The token saving is the dependable part. Precision is a narrower edge: it matters when the
-name is common, or appears in strings, comments and docstrings, where grep cannot tell
-prose from code. On a distinctive class name grep is often nearly right, just far more
-expensive, so reach for the LSP because it is cheaper and exact, not because grep always
-lies.
+The token saving is the dependable part. **Precision matters most on shared names**, and
+there the gap is large: renaming the field `ReadUserDTO.phone_number` is 2 edits in 2
+files, where grep shows 252 lines across 102 files, because `phone_number` is a field on
+many different models and DTOs. Renaming `OrderService.get` is 2 edits, against 1,846
+grep lines; `get` is a method on 52 classes. Ask for a bare `get` and rename refuses,
+listing candidates instead of guessing.
+
+On a distinctive class name grep is often nearly right, just far more expensive. So reach
+for the LSP because it is cheaper and exact, not because grep always lies.
 
 **Where is this defined? What type is it?** → `goToDefinition`, `hover`,
 `goToImplementation`. Not grep for `class X` or `def x`.
@@ -77,6 +81,11 @@ The language server only sees static Python. Reach for grep when the question is
 
 After any rename, grep for the old name once to catch exactly these cases. A clean
 typecheck does not prove a dynamic reference survived.
+
+This is not hypothetical. In this codebase, renaming the DTO field `phone_number` touches 2
+files by the type checker, but `src/integrations/webhook_action.py` reads it as
+`getattr(user_dto, "phone_number", None)`. No type checker can see through that string, and
+nothing would fail until the automation ran. One grep catches it.
 
 ## Diagnostics
 
