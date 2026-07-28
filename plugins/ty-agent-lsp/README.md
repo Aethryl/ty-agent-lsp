@@ -2,9 +2,9 @@
 
 Python code intelligence for Claude Code via [ty](https://github.com/astral-sh/ty).
 
-- **Navigation + diagnostics**, find-references, go-to-definition, document and workspace
+- **Navigation + diagnostics**: find-references, go-to-definition, document and workspace
   symbols, hover, implementations, call hierarchy, and type errors after each edit.
-- **Semantic rename**, `rename_symbol` and `rename_at`, the operation Claude Code's
+- **Semantic rename**: `rename_symbol` and `rename_at`, the operation Claude Code's
   built-in LSP tool omits. Dry-run by default.
 - **A skill** that routes navigation questions to the language server instead of grep.
 
@@ -16,7 +16,7 @@ Python code intelligence for Claude Code via [ty](https://github.com/astral-sh/t
 
 ## Notes
 
-Only one LSP server can claim `.py`, if `pyright-lsp` is enabled, disable it or this one
+Only one LSP server can claim `.py`, so if `pyright-lsp` is enabled, disable it or this one
 never starts.
 
 If your project already typechecks with ty, the diagnostics the agent sees match your CI

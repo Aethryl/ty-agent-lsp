@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Locate a *usable* Python environment for a project, and run ty inside it.
 
-Finding an environment is not enough, it has to contain the project's dependencies.
+Finding an environment is not enough; it has to contain the project's dependencies.
 Poetry keys its virtualenvs to the project path, so a git worktree gets a different key
 than its main checkout and one of two things happens:
 
@@ -9,15 +9,15 @@ than its main checkout and one of two things happens:
   * Poetry creates an empty one, and a shell hook activates it, so `VIRTUAL_ENV` is set
     and useless.
 
-Either way ty resolves no third-party imports and reports every one of them as an error ,
+Either way ty resolves no third-party imports and reports every one of them as an error,
 on one real codebase, 1,724 of them. Under an agent those land in its context after each
 edit, which is worse than useless: it is told working imports are broken. So each candidate
 environment is validated against the project's declared dependencies before it is accepted,
 and a worktree falls back to its main checkout's environment.
 
 Used two ways:
-  * as the LSP command, `python3 ty_resolve.py server` execs ty with the environment set
-  * as a library, `resolve(root)` from the rename server, so both agree on binary and env
+  * as the LSP command: `python3 ty_resolve.py server` execs ty with the environment set
+  * as a library: `resolve(root)` from the rename server, so both agree on binary and env
 """
 
 from __future__ import annotations
@@ -269,7 +269,7 @@ def resolve(root: Path | None = None) -> Environment:
             )
         log(
             "no environment with the project's dependencies found; using ty from PATH "
-            f"({fallback}) with no environment, third-party imports will not resolve"
+            f"({fallback}) with no environment; third-party imports will not resolve"
         )
         chosen = Environment(fallback, None, "PATH")
 

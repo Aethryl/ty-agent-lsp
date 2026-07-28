@@ -290,7 +290,7 @@ def find_symbol(client: LspClient, symbol: str) -> dict[str, Any]:
     """Resolve a bare symbol name to a single definition location.
 
     workspace/symbol is fuzzy, so exact-match filtering is required. Ambiguity and
-    near-misses are reported back rather than guessed at, a wrong guess here would
+    near-misses are reported back rather than guessed at, since a wrong guess here would
     rewrite the wrong symbol across the tree.
     """
     matches = client.request("workspace/symbol", {"query": symbol}) or []
@@ -315,7 +315,7 @@ def find_symbol(client: LspClient, symbol: str) -> dict[str, Any]:
             )
         listing = "\n".join(lines)
         raise LspError(
-            f"{symbol!r} is ambiguous, {len(exact)} definitions match:\n{listing}\n"
+            f"{symbol!r} is ambiguous: {len(exact)} definitions match:\n{listing}\n"
             "Use rename_at with the file, line, and character of the one you mean."
         )
 
@@ -508,7 +508,7 @@ def scan_residual(
     green, so these get reported instead of discovered later.
 
     Positions the rename covers are excluded, so this reads the same before and after
-    applying, the dry run warns rather than merely listing what is about to change.
+    applying, so the dry run warns rather than merely listing what is about to change.
     """
     pattern = re.compile(rf"\b{re.escape(name)}\b")
     spans = covered_spans(edits or {})
@@ -587,7 +587,7 @@ def format_report(
     if residual:
         strings = [item for item in residual if "(string)" in item]
         lead = (
-            f"{len(residual)} place(s) still mention {old_name!r} and were NOT renamed, "
+            f"{len(residual)} place(s) still mention {old_name!r} and were NOT renamed. "
             "ty cannot resolve these:"
         )
         block = lead + "\n" + "\n".join(f"  {item}" for item in residual)
@@ -605,7 +605,7 @@ def format_report(
         parts.append("Re-run with dry_run: false to apply.")
     else:
         parts.append(
-            "Verify with `ty check` (or your project's typecheck command) AND a linter, a "
+            "Verify with `ty check` (or your project's typecheck command) AND a linter: a "
             "green typecheck does not prove a string reference survived. Then review `git diff`."
         )
     return "\n\n".join(parts)
@@ -634,7 +634,7 @@ def do_rename(
             )
         except LspError as exc:
             raise LspError(
-                f"ty will not rename at {relative(path, root)}:{line + 1}:{character + 1}, {exc}"
+                f"ty will not rename at {relative(path, root)}:{line + 1}:{character + 1}: {exc}"
             )
 
         scan_name = identifier_at(path, prepared) or (
@@ -754,7 +754,7 @@ TOOLS = [
             "semantic understanding. Resolves the symbol by name; if the name is ambiguous "
             "or unknown it returns the candidates instead of guessing. Defaults to a dry "
             "run that reports the edits without writing. Use this instead of grep plus "
-            "manual edits, it will not touch matching text in strings, comments, or "
+            "manual edits; it will not touch matching text in strings, comments, or "
             "docstrings. Cannot see dynamic access (getattr, string-keyed dispatch), "
             "migrations, or templates; check those separately."
         ),
@@ -786,7 +786,7 @@ TOOLS = [
         "name": "rename_at",
         "description": (
             "Rename the Python symbol at an exact position and every reference to it, "
-            "project-wide. Use when a bare name is ambiguous, a method or field shared by "
+            "project-wide. Use when a bare name is ambiguous: a method or field shared by "
             "several classes, or a local. line and character are 1-based, matching editor "
             "display and grep output. Defaults to a dry run."
         ),

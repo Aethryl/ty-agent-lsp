@@ -1,6 +1,6 @@
 ---
 name: ty-navigation
-description: How to navigate and refactor Python with the language server instead of grep. Use when locating where a symbol is defined or used, reading an unfamiliar or large Python file, tracing a call chain, or renaming any Python symbol. Also use when tempted to grep for an identifier, the LSP answers those questions correctly and far more cheaply.
+description: How to navigate and refactor Python with the language server instead of grep. Use when locating where a symbol is defined or used, reading an unfamiliar or large Python file, tracing a call chain, or renaming any Python symbol. Also use when tempted to grep for an identifier, since the LSP answers those questions correctly and far more cheaply.
 ---
 
 # Navigating Python with ty
@@ -48,9 +48,9 @@ matter.
 
 Claude Code's built-in LSP tool has no rename operation, so this plugin adds two:
 
-- `rename_symbol(symbol, new_name)`, resolves by name. If the name is unknown or
+- `rename_symbol(symbol, new_name)`: resolves by name. If the name is unknown or
   ambiguous it returns candidates rather than guessing.
-- `rename_at(file, line, character, new_name)`, 1-based position, for when a bare name is
+- `rename_at(file, line, character, new_name)`: 1-based position, for when a bare name is
   ambiguous (a method or attribute shared across classes, or a local).
 
 Both **default to a dry run** that reports the edit count per file without writing. Read
@@ -61,7 +61,7 @@ A rename of one class produced 237 edits across 38 files in 0.5s, correct by
 construction, and it left the class name mentioned in docstrings and string literals
 alone.
 
-Every rename ends with a report of what it could **not** rename, occurrences ty cannot
+Every rename ends with a report of what it could **not** rename: occurrences ty cannot
 resolve, tagged `(string)` or `(text)`. Read it. The `(string)` ones break at runtime while
 the typecheck stays green.
 
@@ -69,35 +69,35 @@ After applying a rename:
 
 1. Fix anything the residual report flagged, `(string)` entries first.
 2. Run the project's typecheck (`ty check`, or whatever the repo uses).
-3. Run the linter too, a green typecheck is not proof. In this codebase a rename left
-   `"BaseError"` in an `__all__` list; `ty check` said "All checks passed!" while
+3. Run the linter too, because a green typecheck is not proof. In one real repo a rename
+   left `"BaseError"` in an `__all__` list; `ty check` said "All checks passed!" while
    `from mypkg.errors import *` raised `AttributeError`. Ruff caught it.
 4. Review `git diff`.
-5. Grep non-Python files, the residual scan only reads `.py`/`.pyi`.
+5. Grep non-Python files, since the residual scan only reads `.py`/`.pyi`.
 
 ## Where grep is still the right tool
 
 The language server only sees static Python. Reach for grep when the question is about:
 
-- **Dynamic access**, `getattr`/`setattr`, string-keyed dispatch tables, dependency
+- **Dynamic access**: `getattr`/`setattr`, string-keyed dispatch tables, dependency
   injection by name, anything where the identifier only exists as a string at runtime.
-- **Non-Python files**, SQL, Alembic migrations that name tables or columns as strings,
+- **Non-Python files**: SQL, Alembic migrations that name tables or columns as strings,
   Jinja/HTML templates, YAML/TOML config, JSON fixtures.
-- **String and comment content**, user-facing copy, enum *values* (as opposed to member
+- **String and comment content**: user-facing copy, enum *values* (as opposed to member
   names), log messages, TODOs.
 - **Files outside the project root** the server has indexed.
 
 After any rename, grep for the old name once to catch exactly these cases. A clean
 typecheck does not prove a dynamic reference survived.
 
-This is not hypothetical. In this codebase, renaming the DTO field `phone_number` touches 2
-files by the type checker, but `src/integrations/webhook_action.py` reads it as
+This is not hypothetical. In one real repo, renaming the DTO field `phone_number` touched 2
+files by the type checker, while an unrelated module read it as
 `getattr(user_dto, "phone_number", None)`. No type checker can see through that string, and
-nothing would fail until the automation ran. One grep catches it.
+nothing would fail until that code path ran. One grep catches it.
 
 ## Diagnostics
 
 ty pushes diagnostics into context after edits, so a type error in a file you just changed
 surfaces on its own. Don't shell out to a full typecheck just to see whether an edit was
-sound, read the diagnostic. Run the project's own typecheck command before handing work
+sound; read the diagnostic. Run the project's own typecheck command before handing work
 over, or when you need whole-project confirmation.
