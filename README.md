@@ -139,6 +139,18 @@ Verified against a fixture built for the purpose:
 - **Multiple occurrences on one line** all land correctly (edits are applied bottom-up so
   earlier ones never shift later offsets).
 
+## A note on diagnostics
+
+ty supports both LSP diagnostic models and picks based on what the client advertises. If a
+client declares pull support (`textDocument.diagnostic`), ty answers
+`textDocument/diagnostic` and sends **no** `publishDiagnostics` at all, correct 3.17
+behaviour, avoiding duplicates. If the client declares push only, ty pushes.
+
+Claude Code is a push client: it registers a `textDocument/publishDiagnostics` handler and
+does not advertise pull support. So diagnostics arrive on edit, as intended. Worth knowing
+because it's the failure mode to check first if diagnostics ever go quiet, a client that
+starts advertising pull would see ty fall silent on push while still being perfectly healthy.
+
 ### What no tool can do
 
 ty sees static Python. It does not see `getattr`/`setattr`, string-keyed dispatch, table
