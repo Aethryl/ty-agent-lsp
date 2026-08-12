@@ -16,36 +16,26 @@ outlines, type errors after each edit, and a real workspace-wide rename.
 
 ## Install
 
+Needs Claude Code v2.1.205+, Python 3.10+, and `ty` on PATH (`uv tool install ty`).
+
 ```text
 /plugin marketplace add Aethryl/ty-agent-lsp
 /plugin install ty-agent-lsp@ty-agent-lsp
 /reload-plugins
 ```
 
-Requirements:
-
-| | |
-| --- | --- |
-| Claude Code | v2.1.205+ (older versions silently skip the server) |
-| `ty` | on PATH — `uv tool install ty` |
-| Python | 3.10+, stdlib only, nothing to install |
-
-Check `/plugin`: one LSP server, one MCP server, empty Errors tab. `claude --debug` says why
-if a server was skipped.
-
-**Only one Python LSP may be enabled** — the first to claim `.py` wins, the other never
-starts. Disable `pyright-lsp` if you have it:
-
-```json
-{ "enabledPlugins": { "pyright-lsp@claude-plugins-official": false } }
-```
+Only one Python LSP can be enabled — the first to claim `.py` wins. Disable `pyright-lsp`
+if you have it.
 
 ## What you get
 
-- **Navigation + diagnostics** — automatic. References, definitions, symbols, hover,
-  implementations, call hierarchy; type errors pushed into context after each edit.
-- **Rename** — two MCP tools; Claude Code's built-in LSP tool has none.
+- **Navigation + diagnostics**, automatic: references, definitions, symbols, hover,
+  implementations, call hierarchy, type errors pushed into context after each edit.
+- **Rename**, via MCP — Claude Code's built-in LSP tool has none.
 - **A skill** telling the agent to use all of it instead of grep.
+
+`ty` is resolved per project (`$VIRTUAL_ENV` → `.venv` → Poetry → PATH), so the agent's
+diagnostics match your CI. Worktrees fall back to the main checkout's environment.
 
 ## Rename
 
@@ -55,14 +45,14 @@ starts. Disable `pyright-lsp` if you have it:
 | `rename_at` | 1-based `file`, `line`, `character` |
 
 - Both take `new_name`; both **dry-run by default** — pass `dry_run: false` to write.
-- Dry run prints edit count + affected files, so the blast radius is visible first.
-- Unknown or ambiguous name → refused, with near-miss candidates listed. Never guessed.
-- Every run lists occurrences ty **could not** resolve, tagged `(text)` or `(string)`.
+- Dry run prints edit count and affected files, so the blast radius is visible first.
+- Ambiguous or unknown name → refused, candidates listed. Never guessed.
+- Every run lists what ty **could not** resolve, tagged `(text)` or `(string)`.
 
 ## Why it pays off
 
 Across 125 real sessions on a 203k-LOC codebase, **63% of tool-output tokens went to `Read`
-and `grep`**. Measured on that codebase:
+and `grep`**. On that same codebase:
 
 | Question | With ty | With grep / Read |
 | --- | --- | --- |
@@ -71,77 +61,14 @@ and `grep`**. Measured on that codebase:
 | `ReadUserDTO.phone_number` → `phone` | **2 edits, 2 files** | 252 lines, 102 files |
 | `OrderService.get` → `get_by_id` | **2 edits, 2 files** | 1,846 lines |
 
-Cheaper always; dramatically more accurate on common names (`get` is a method on 52
-classes). Counts aren't directly comparable — grep counts lines, LSP counts occurrences.
-
-## Which ty gets used
-
-Resolved per project so diagnostics match your CI, in order:
-
-1. `$VIRTUAL_ENV` → 2. `<project>/.venv`, `venv` → 3. Poetry env → 4. `PATH`
-
-Both servers share the resolver, so they can't disagree. `claude --debug` shows the pick.
-Available operations track the *resolved* version — on ty 0.0.62 `goToImplementation` is
-simply absent.
-
-## Worktrees
-
-Poetry keys its venv on the project path, so a worktree finds nothing or an empty venv → ty
-resolves no imports → 1,724 phantom errors in the agent's context. So:
-
-- A candidate env must actually contain a declared dependency, else it's rejected (logged).
-- In a worktree, falls back to the main checkout's `.venv` / Poetry env.
-- Warns when a worktree's dependency tables differ from main — it needs its own install.
-
-Other tools do their own discovery, so symlink the env in once:
-
-```bash
-MAIN=$(dirname "$(git rev-parse --git-common-dir)")
-ln -sfn "$(poetry -C "$MAIN" env info --path)" .venv
-```
-
 ## Limits
 
-Verified: docstrings, comments and string literals untouched; CRLF stays CRLF; UTF-16
-columns converted correctly; multiple hits per line all land.
-
-Not solvable by any tool — ty sees static Python only:
-
-- `getattr`/`setattr`, string-keyed dispatch, `__all__` entries, registry keys, Alembic
-  migrations, Jinja, config files.
-- Real case: renaming `BaseError` passed `ty check` cleanly and still broke the package —
-  `__all__` held the old name as a string. Hence the residual scan; `(string)` hits are the
-  dangerous ones.
-- The scan covers `.py`/`.pyi` only. **Grep your templates, SQL and YAML after a rename**,
-  and run a linter, not just a typechecker.
+ty sees static Python only: `getattr`, string-keyed dispatch, `__all__` entries, registry
+keys, migrations, templates and config are invisible to it — and a rename can break them
+while `ty check` still passes. That's what the residual scan reports; `(string)` hits are
+the dangerous ones. It covers `.py`/`.pyi`, so grep your templates, SQL and YAML too.
 
 ty is pre-1.0 (tested against 0.0.62). Review the diff before committing.
-
-## Notes
-
-- **Why ty, not pyright** — if your project already uses ty, the agent sees exactly what
-  pre-commit and CI enforce, `[tool.ty]` rules included. If pyright is your source of truth,
-  install `pyright-lsp` instead and lose rename.
-- **Diagnostics** — ty pushes `publishDiagnostics` because Claude Code is a push client. If
-  diagnostics ever go quiet, check that first: a client advertising pull support makes ty go
-  silent on push while staying perfectly healthy.
-
-## Layout
-
-```text
-.claude-plugin/marketplace.json
-plugins/ty-agent-lsp/
-├── .claude-plugin/plugin.json       # lspServers: ty
-├── .mcp.json                        # rename server
-├── server/ty_refactor.py            # stdlib-only MCP↔LSP bridge
-└── skills/ty-navigation/SKILL.md    # LSP-before-grep guidance
-```
-
-## Prior art
-
-[`ilepn/ty-lsp-claude-code`](https://github.com/ilepn/ty-lsp-claude-code) (MIT) — LSP
-declaration only, no rename/skill/marketplace, and runs `uvx ty@latest`, which may not be
-the version your project pins.
 
 ## License
 
