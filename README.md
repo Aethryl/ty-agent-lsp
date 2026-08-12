@@ -11,45 +11,8 @@
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-3776ab.svg">
 </p>
 
-Three things, one install:
-
-1. **Semantic navigation and diagnostics** via Claude Code's native LSP integration:
-   find-references, go-to-definition, document/workspace symbols, hover, implementations,
-   call hierarchy, and type errors pushed into context after each edit.
-2. **Workspace-wide semantic rename**, as two MCP tools: `rename_symbol` and `rename_at`.
-   Claude Code's built-in LSP tool has no rename operation; this fills that gap.
-3. **A skill** that tells the agent to use all of the above instead of reaching for grep.
-
-What that buys you, measured on a 203k-LOC Python codebase:
-
-- **31× cheaper file comprehension.** An 87-symbol outline of a 2,595-line router costs
-  740 tokens against 23,305 to read the file whole.
-- **Exact references in under a second.** 237 uses of a class across 38 files, with no
-  docstring or comment false positives.
-- **Renames that touch only the symbol you meant.** `ReadUserDTO.phone_number` → `phone`
-  is 2 edits in 2 files; grep would put 252 lines across 102 files in front of the agent.
-- Across 125 real sessions, **63% of all tool-output tokens went to `Read` and `grep`**.
-  That is the bill this shrinks; [full numbers below](#why-it-pays-off).
-
-**Contents** · [Requirements](#requirements) · [Install](#install) · [Usage](#usage) ·
-[Why it pays off](#why-it-pays-off) · [Which ty gets used](#which-ty-gets-used) ·
-[Worktrees](#worktrees) · [ty vs. pyright](#why-ty-rather-than-pyright) ·
-[Rename limits](#rename-what-it-guarantees-and-what-it-cannot) ·
-[Diagnostics](#a-note-on-diagnostics)
-
-## Requirements
-
-- **Claude Code v2.1.205 or newer.** Earlier versions accept the LSP config schema but
-  silently skip servers that set `restartOnCrash` or `shutdownTimeout`, with the reason
-  visible only under `claude --debug`.
-- **`ty` on your PATH.** This plugin configures a language server; it does not ship one.
-- **Python 3.10+** for the rename server. It is pure standard library, so there is nothing
-  to pip install.
-
-```bash
-uv tool install ty     # or: pip install ty
-ty --version
-```
+The agent navigates Python by symbol instead of by grep: exact references, cheap file
+outlines, type errors after each edit, and a real workspace-wide rename.
 
 ## Install
 
@@ -59,242 +22,126 @@ ty --version
 /reload-plugins
 ```
 
-To try it from a local clone instead:
+Requirements:
 
-```text
-/plugin marketplace add ./ty-agent-lsp
-/plugin install ty-agent-lsp@ty-agent-lsp
-/reload-plugins
-```
+| | |
+| --- | --- |
+| Claude Code | v2.1.205+ (older versions silently skip the server) |
+| `ty` | on PATH — `uv tool install ty` |
+| Python | 3.10+, stdlib only, nothing to install |
 
-Confirm it came up in `/plugin`: the entry should list one LSP server and one MCP server,
-with nothing in the Errors tab. If a server was skipped, `claude --debug` says why.
+Check `/plugin`: one LSP server, one MCP server, empty Errors tab. `claude --debug` says why
+if a server was skipped.
 
-### Only run one Python language server
-
-When two enabled LSP servers claim `.py`, **the first one registered wins and the other
-never starts.** If you already have `pyright-lsp` installed, disable it:
+**Only one Python LSP may be enabled** — the first to claim `.py` wins, the other never
+starts. Disable `pyright-lsp` if you have it:
 
 ```json
-{
-  "enabledPlugins": {
-    "pyright-lsp@claude-plugins-official": false,
-    "ty-agent-lsp@ty-agent-lsp": true
-  }
-}
+{ "enabledPlugins": { "pyright-lsp@claude-plugins-official": false } }
 ```
 
-## Usage
+## What you get
 
-Navigation and diagnostics need nothing from you: once the plugin is enabled the agent gets
-the LSP operations automatically, the bundled skill points it at them instead of grep, and
-type errors arrive in its context after each edit.
+- **Navigation + diagnostics** — automatic. References, definitions, symbols, hover,
+  implementations, call hierarchy; type errors pushed into context after each edit.
+- **Rename** — two MCP tools; Claude Code's built-in LSP tool has none.
+- **A skill** telling the agent to use all of it instead of grep.
 
-Rename is explicit, through two MCP tools:
+## Rename
 
-| Tool | Selects the symbol by | Use when |
-| --- | --- | --- |
-| `rename_symbol` | project-wide name (`symbol`) | the name is unique enough to identify on its own |
-| `rename_at` | 1-based `file`, `line`, `character` | the name is ambiguous, or you already know the position |
+| Tool | Picks the symbol by |
+| --- | --- |
+| `rename_symbol` | project-wide name |
+| `rename_at` | 1-based `file`, `line`, `character` |
 
-Both take `new_name`, and both default to a **dry run**: nothing is written until you pass
-`dry_run: false`. Both also accept an optional `project_root`, which defaults to
-`CLAUDE_PROJECT_DIR` and then the working directory.
-
-A dry run reports the total edit count and the affected files ranked by edits, so the blast
-radius is visible before anything changes. An unknown or misspelled name is not a silent
-no-op: `rename_symbol` reports that nothing matched and lists near-miss candidates. An
-ambiguous name is refused the same way, with the candidates listed rather than guessed at.
-
-Every rename, dry run included, also lists the occurrences ty *could not* resolve, which is
-the part worth reading before you apply one. See
-[Rename: what it guarantees and what it cannot](#rename-what-it-guarantees-and-what-it-cannot).
-
----
-
-Everything below is detail: the measurements, how the `ty` binary is chosen, worktree
-pitfalls, and the exact limits of rename.
+- Both take `new_name`; both **dry-run by default** — pass `dry_run: false` to write.
+- Dry run prints edit count + affected files, so the blast radius is visible first.
+- Unknown or ambiguous name → refused, with near-miss candidates listed. Never guessed.
+- Every run lists occurrences ty **could not** resolve, tagged `(text)` or `(string)`.
 
 ## Why it pays off
 
-Left to itself, the agent finds code by grepping and then reading whole files. Across 125
-real sessions on a 203k-LOC Python codebase (8,252 tool calls), **63% of all tool-output
-tokens went to `Read` and `grep`**: 972k tokens reading files, 535k tokens grepping.
-
-That work is both expensive and imprecise. Grep matches text, so it hits identifiers inside
-docstrings, comments and string literals, and it cannot tell two same-named symbols apart.
-
-Measured on that same codebase, with `ty` already on PATH:
+Across 125 real sessions on a 203k-LOC codebase, **63% of tool-output tokens went to `Read`
+and `grep`**. Measured on that codebase:
 
 | Question | With ty | With grep / Read |
 | --- | --- | --- |
-| Where is `UserService` used? | 237 references across 38 files, **0.5s** | 163 raw source lines ≈ 4,300 tokens of source to re-read |
-| What's in a 2,595-line router? | 87-symbol outline, **740 tokens** | 23,305 tokens to read it whole (**31×**) |
-| What's in a 1,595-line service? | 55-symbol outline, **516 tokens** | 16,288 tokens (**31×**) |
-| Rename a class everywhere | **237 edits across 38 files, 0.5s** | grep, then edit 38 files by hand |
-
-Numbers are from one real repository; yours will differ. The shape won't.
-
-The token saving is the reliable win: an outline costs a fraction of the file, and a
-reference list costs a fraction of the grep output it replaces.
-
-**Precision pays off exactly where names are shared**, and there the gap is not marginal:
-
-| Rename | ty | grep would show |
-| --- | --- | --- |
-| `ReadUserDTO.phone_number` → `phone` | **2 edits, 2 files** | 252 lines across 102 files |
+| Where is `UserService` used? | 237 refs, 38 files, 0.5s | 163 lines ≈ 4,300 tokens |
+| Outline a 2,595-line router | 87 symbols, **740 tokens** | 23,305 tokens (**31×**) |
+| `ReadUserDTO.phone_number` → `phone` | **2 edits, 2 files** | 252 lines, 102 files |
 | `OrderService.get` → `get_by_id` | **2 edits, 2 files** | 1,846 lines |
 
-`phone_number` is a field on many different models, DTOs and schemas; `get` is a method on
-52 different classes. ty renames the one you pointed at and leaves the 51 others alone.
-Asked for a bare `get`, it refuses outright and lists the candidates rather than guessing.
-
-On a *distinctive* class name grep is often nearly right, just far more expensive: on this
-codebase `BaseError` gives 26 references against 31 grep lines, only 2 of which are
-docstring prose. So the honest summary is that it is always cheaper, and dramatically more
-accurate on common names.
-
-Note the counts aren't directly comparable: grep counts matching *lines*, the LSP counts
-*occurrences*, and Claude Code's LSP tool passes `includeDeclaration: true`.
+Cheaper always; dramatically more accurate on common names (`get` is a method on 52
+classes). Counts aren't directly comparable — grep counts lines, LSP counts occurrences.
 
 ## Which ty gets used
 
-A global `ty` drifts from what a project pins, and then the agent sees diagnostics the
-project's own hooks and CI don't have, which defeats the main reason to run ty. So the
-plugin resolves the binary per project, in this order:
+Resolved per project so diagnostics match your CI, in order:
 
-1. `$VIRTUAL_ENV`
-2. `<project>/.venv`, then `<project>/venv`
-3. the Poetry environment, when `pyproject.toml` declares Poetry (Poetry keeps venvs
-   outside the project, so it has to be asked; this costs ~0.4s once per server start)
-4. `ty` on `PATH`
+1. `$VIRTUAL_ENV` → 2. `<project>/.venv`, `venv` → 3. Poetry env → 4. `PATH`
 
-Both the language server and the rename tools go through the same resolver, so they can
-never disagree about which binary is in play. `claude --debug` shows the choice
-(`[ty-resolve] using ty from poetry: …`).
-
-**The consequence worth knowing:** available operations track the resolved version, not the
-newest release. On a project pinned to ty 0.0.62 you get navigation, diagnostics and rename,
-but `goToImplementation` is absent, because ty added `implementationProvider` only in 0.0.64.
-That is the intended trade: diagnostics that agree with your pipeline matter more than one
-extra navigation op, and it resolves itself when the project bumps ty.
+Both servers share the resolver, so they can't disagree. `claude --debug` shows the pick.
+Available operations track the *resolved* version — on ty 0.0.62 `goToImplementation` is
+simply absent.
 
 ## Worktrees
 
-Poetry names its virtualenv from a hash of the project path, so a git worktree has no link to
-its main checkout's environment. Poetry then either finds nothing, or creates an empty venv
-that a shell hook activates, leaving `VIRTUAL_ENV` set and useless. Either way ty resolves no
-third-party imports and reports every one as an error. On a 203k-LOC project that is **1,724
-phantom diagnostics**, and with `diagnostics: true` they land in the agent's context after
-every edit, telling it working imports are broken.
+Poetry keys its venv on the project path, so a worktree finds nothing or an empty venv → ty
+resolves no imports → 1,724 phantom errors in the agent's context. So:
 
-So the plugin does not trust an environment merely because it found one. Each candidate must
-contain at least one of the project's declared dependencies (read with `tomllib`); an env
-holding only pip and setuptools is rejected, with the reason logged. If the project is a git
-worktree, it falls back to the main checkout's `.venv` and Poetry environment, found via
-`git rev-parse --git-common-dir`.
+- A candidate env must actually contain a declared dependency, else it's rejected (logged).
+- In a worktree, falls back to the main checkout's `.venv` / Poetry env.
+- Warns when a worktree's dependency tables differ from main — it needs its own install.
 
-It also warns when a worktree's dependency tables differ from its main checkout, since the
-shared environment is then wrong for it: that worktree wants its own `poetry install`.
-
-Other tools do their own discovery, so for them symlink the environment into the worktree:
+Other tools do their own discovery, so symlink the env in once:
 
 ```bash
 MAIN=$(dirname "$(git rev-parse --git-common-dir)")
 ln -sfn "$(poetry -C "$MAIN" env info --path)" .venv
 ```
 
-Poetry uses an existing `.venv` in preference to its path-keyed one, so this fixes
-`poetry run`, your editor's language server, and this plugin in one step.
+## Limits
 
-## Why ty rather than pyright
+Verified: docstrings, comments and string literals untouched; CRLF stays CRLF; UTF-16
+columns converted correctly; multiple hits per line all land.
 
-If your project already uses ty, this matters: the diagnostics the agent sees are then
-**identical to what your pre-commit hooks and CI enforce**. Point the agent at a different
-checker and it will chase errors your pipeline doesn't have, and miss ones it does. ty's
-`[tool.ty]` rules (`deprecated = "error"`, for instance) have no pyright equivalent.
+Not solvable by any tool — ty sees static Python only:
 
-ty is also fast enough to be invisible: lazy startup, and sub-second find-references
-across 2,000 files.
+- `getattr`/`setattr`, string-keyed dispatch, `__all__` entries, registry keys, Alembic
+  migrations, Jinja, config files.
+- Real case: renaming `BaseError` passed `ty check` cleanly and still broke the package —
+  `__all__` held the old name as a string. Hence the residual scan; `(string)` hits are the
+  dangerous ones.
+- The scan covers `.py`/`.pyi` only. **Grep your templates, SQL and YAML after a rename**,
+  and run a linter, not just a typechecker.
 
-If your project uses pyright as its source of truth, install `pyright-lsp` instead. You
-would lose rename, which pyright's server supports but Claude Code does not expose.
+ty is pre-1.0 (tested against 0.0.62). Review the diff before committing.
 
-## Rename: what it guarantees and what it cannot
+## Notes
 
-Verified against a fixture built for the purpose:
-
-- Identifiers in **docstrings, comments and string literals are left alone**.
-- **CRLF files stay CRLF**; a file with no trailing newline doesn't gain one.
-- **Non-ASCII lines** are handled: LSP columns are UTF-16 code units, converted properly,
-  so a line containing `café ☕ naïve ünïcode ✨` edits at the right offset.
-- **Multiple occurrences on one line** all land correctly (edits are applied bottom-up so
-  earlier ones never shift later offsets).
-
-### It tells you what it could not rename
-
-ty renames what it can resolve. The same name in an `__all__` list, a `getattr` lookup, a
-registry key or a migration is invisible to it, and **`ty check` still passes, because
-none of those are type errors.** So every rename ends with a scan for occurrences it left
-behind, each tagged by kind: `(text)` for prose such as a docstring mention, `(string)` for
-a string literal. Positions the rename covers are excluded, so the report reads the same
-before and after applying, and the risk is visible on the dry run.
-
-The `(string)` entries are the dangerous ones: a name in an `__all__` list, a `getattr`
-lookup or a registry key keeps typechecking cleanly and fails at runtime.
-
-This is not hypothetical. Renaming `BaseError` in the test repo rewrote 26 references
-across 10 files, `ty check` reported *"All checks passed!"*, and the package was broken:
-`__init__.py` still listed `"BaseError"` in `__all__` as a string, so
-`from mypkg.errors import *` raised `AttributeError`. The typecheck could not see it; a
-linter and this scan both could.
-
-### What no tool can do
-
-ty sees static Python. It does not see `getattr`/`setattr`, string-keyed dispatch, table
-and column names in Alembic migrations, Jinja templates, or identifiers spelled out in
-config. The residual scan covers `.py`/`.pyi` only, so **after any rename also grep your
-non-Python files**: templates, SQL, YAML. And run a linter, not just a typechecker.
-
-ty is also pre-1.0 (tested against 0.0.62). Rename correctness is not guaranteed, which is
-why dry-run is the default. Typecheck and review the diff before committing.
-
-## A note on diagnostics
-
-ty supports both LSP diagnostic models and picks based on what the client advertises. If a
-client declares pull support (`textDocument.diagnostic`), ty answers
-`textDocument/diagnostic` and sends **no** `publishDiagnostics` at all, which is correct
-3.17 behaviour and avoids duplicates. If the client declares push only, ty pushes.
-
-Claude Code is a push client: it registers a `textDocument/publishDiagnostics` handler and
-does not advertise pull support. So diagnostics arrive on edit, as intended. Worth knowing
-because it's the failure mode to check first if diagnostics ever go quiet: a client that
-starts advertising pull would see ty fall silent on push while still being perfectly healthy.
+- **Why ty, not pyright** — if your project already uses ty, the agent sees exactly what
+  pre-commit and CI enforce, `[tool.ty]` rules included. If pyright is your source of truth,
+  install `pyright-lsp` instead and lose rename.
+- **Diagnostics** — ty pushes `publishDiagnostics` because Claude Code is a push client. If
+  diagnostics ever go quiet, check that first: a client advertising pull support makes ty go
+  silent on push while staying perfectly healthy.
 
 ## Layout
 
 ```text
-ty-agent-lsp/
-├── .claude-plugin/marketplace.json
-└── plugins/ty-agent-lsp/
-    ├── .claude-plugin/plugin.json       # lspServers: ty
-    ├── .mcp.json                        # the rename server
-    ├── server/ty_refactor.py            # stdlib-only MCP server
-    └── skills/ty-navigation/SKILL.md    # LSP-before-grep guidance
+.claude-plugin/marketplace.json
+plugins/ty-agent-lsp/
+├── .claude-plugin/plugin.json       # lspServers: ty
+├── .mcp.json                        # rename server
+├── server/ty_refactor.py            # stdlib-only MCP↔LSP bridge
+└── skills/ty-navigation/SKILL.md    # LSP-before-grep guidance
 ```
-
-`server/ty_refactor.py` bridges two transports: Claude Code speaks MCP (newline-delimited
-JSON-RPC), ty speaks LSP (Content-Length-framed JSON-RPC).
 
 ## Prior art
 
-[`ilepn/ty-lsp-claude-code`](https://github.com/ilepn/ty-lsp-claude-code) (MIT) is a
-minimal ty LSP declaration for Claude Code, written in response to
-[astral-sh/ty#2230](https://github.com/astral-sh/ty/issues/2230). It covers the LSP
-declaration only, with no rename, no skill and no marketplace, and it invokes ty as
-`uvx ty@latest server`, which resolves a possibly different version than the one your
-project pins. This plugin uses the `ty` on your PATH so the agent's diagnostics match your
-CI, and adds the rename and guidance layers.
+[`ilepn/ty-lsp-claude-code`](https://github.com/ilepn/ty-lsp-claude-code) (MIT) — LSP
+declaration only, no rename/skill/marketplace, and runs `uvx ty@latest`, which may not be
+the version your project pins.
 
 ## License
 
