@@ -68,8 +68,6 @@ keys, migrations, templates and config are invisible to it — and a rename can 
 while `ty check` still passes. That's what the residual scan reports; `(string)` hits are
 the dangerous ones. It covers `.py`/`.pyi`, so grep your templates, SQL and YAML too.
 
-ty is pre-1.0 (tested against 0.0.62). Review the diff before committing.
-
 ## License
 
 MIT
