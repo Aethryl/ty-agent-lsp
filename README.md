@@ -33,6 +33,10 @@ if you have it.
   implementations, call hierarchy, type errors pushed into context after each edit.
 - **Rename**, via MCP — Claude Code's built-in LSP tool has none.
 - **A skill** telling the agent to use all of it instead of grep.
+- **A guard hook** that enforces it: `cat`/`sed`/`head`/`tail` on a `.py` file is denied, a
+  whole-file Read over 300 lines is denied until the agent outlines it or passes
+  offset/limit, and grep over Python gets a reminder to use the LSP. Subagents, which have
+  no LSP tool, pass through.
 
 `ty` is resolved per project (`$VIRTUAL_ENV` → `.venv` → Poetry → PATH), so the agent's
 diagnostics match your CI. Worktrees fall back to the main checkout's environment.
