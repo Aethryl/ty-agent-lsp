@@ -7,8 +7,6 @@ Python code intelligence for Claude Code via [ty](https://github.com/astral-sh/t
 - **Semantic rename**: `rename_symbol` and `rename_at`, the operation Claude Code's
   built-in LSP tool omits. Dry-run by default.
 - **A skill** that routes navigation questions to the language server instead of grep.
-- **A guard hook** that denies reading Python through `cat`/`sed` and whole-file reads over
-  300 lines, and reminds the agent to use the LSP when it greps Python.
 
 ## Requirements
 
